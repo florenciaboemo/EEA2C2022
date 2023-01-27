@@ -1,0 +1,803 @@
+---
+title: "Enfoque Estadístico del Aprendizaje - Trabajo práctico 1: Regresión lineal"
+subtitle: "Especialización en Explotación de datos y Descubrimiento del conocimiento"
+author: "María Florencia Boemo Bravo"
+output: 
+  html_document:
+    theme: cerulean
+    df_print: paged
+date: '`r Sys.Date()`'
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r tp1 eea, message= FALSE, echo=FALSE}
+
+r = getOption("repos")
+r["CRAN"] = "http://cran.us.r-project.org"
+options(repos = r)
+```
+
+## Introducción
+
+En el presente trabajo, se analizará una muestra de datos provenientes de la 3° Encuesta Mundial de Salud Escolar, provistos por el Ministerio de Salud de Argentina. El objetivo de dicho relevamiento es proveer datos precisos sobre comportamientos relativos a la salud en los estudiantes, así como también detectar posibles factores de riesgo o de protección, que pudieran ser destacables a la hora de diseñar políticas públicas. En particular, se aprovecharán los datos recabados en el contexto de la EMSE para predecir y explicar el peso de los estudiantes.\
+
+Las librerías relevantes utilizadas en el presente trabajo se muestran a continuación.
+
+```{r cargar paquetes, message=FALSE, warning=FALSE}
+#install.packages('tidyverse')
+#install.packages('kableExtra')
+#install.packages('GGally')
+#install.packages('wesanderson')
+#install.packages('corrr')
+#install.packages('ggplot')
+#install.packages('broom')
+#install.packages('cowplot')
+#install.packages('stringr')
+#install.packages('yardstick')
+#install.packages('plyr')
+```
+
+## Análisis exploratorios
+
+En primer lugar, se analizó la estructura del archivo _encuesta_salud_train.csv_ 
+
+```{r leer train, message=FALSE}
+library(tidyverse)
+encuesta_salud_train <- read.csv("C:/Users/flore/Desktop/Trabajo Práctico 1/Datasets/encuesta_salud_train.csv")
+encuesta_salud_test <- read.csv("C:/Users/flore/Desktop/Trabajo Práctico 1/Datasets/encuesta_salud_test.csv")
+glimpse(encuesta_salud_train)
+```
+
+Tal como se observa, las variables Edad, Altura, Peso, Días de consumo de comida rápida, Consumo diario de alcohol y Días de actividad física semanal son numéricas. Las restantes, a excepción de Record (etiqueta de los datos), son de tipo categóricas. \
+
+Observando el dataset, se puede detectar que los valores faltantes están almacenados con la etiqueta "Dato perdido". Entonces, se investigó la cantidad de información incompleta en los conjuntos de train y test, discriminándola por columnas.
+
+```{r chequear perdidos, message=FALSE}
+#contar datos faltantes
+perdidos_train_porc <- round(sum(encuesta_salud_train=='Dato perdido')/nrow(encuesta_salud_train), digits = 2)
+perdidos_test_porc <- round(sum(encuesta_salud_test=='Dato perdido')/nrow(encuesta_salud_test), digits = 2)
+print(paste('Porcentaje de datos perdidos, train: ', perdidos_train_porc))
+print(paste('Porcentaje de datos perdidos, test: ', perdidos_test_porc))
+                                                                
+#ver donde están ubicados
+colSums(encuesta_salud_train == 'Dato perdido')
+colSums(encuesta_salud_test == 'Dato perdido')
+```
+
+Como alrededor del 5% de las entradas presentan valores faltantes, se decidió limpiar el dataset en lugar de tratar de imputar dichos datos perdidos. A lo largo del presente trabajo, se realizará el análisis considerando únicamente los datos limpios.
+
+```{r limpieza, message=FALSE}
+#limpieza de datos train
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$nivel_educativo!='Dato perdido', ]
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$frecuencia_hambre_mensual!='Dato perdido', ]
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$consumo_semanal_frutas!='Dato perdido', ]
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$consumo_semanal_verdura!='Dato perdido', ]
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$consumo_semanal_gaseosas!='Dato perdido', ]
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$consumo_semanal_snacks!='Dato perdido', ]
+encuesta_salud_train <- encuesta_salud_train[encuesta_salud_train$consumo_semanal_comida_grasa!='Dato perdido', ]
+
+#limpieza de datos test
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$nivel_educativo!='Dato perdido', ]
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$frecuencia_hambre_mensual!='Dato perdido', ]
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$consumo_semanal_frutas!='Dato perdido', ]
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$consumo_semanal_verdura!='Dato perdido', ]
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$consumo_semanal_gaseosas!='Dato perdido', ]
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$consumo_semanal_snacks!='Dato perdido', ]
+encuesta_salud_test <- encuesta_salud_test[encuesta_salud_test$consumo_semanal_comida_grasa!='Dato perdido', ]
+```
+
+A continuación, se procedió a investigar relaciones entre las diferentes variables. Para ello, se graficaron todas las variables numéricas de a pares para el conjunto de datos de entrenamiento.
+
+```{r, message=FALSE, fig.height=7, fig.width=9, fig.cap='Figura 1. Correlación entre variables de a pares'}
+encuesta_numericas <- encuesta_salud_train[, c(2,3,5,6,8,10,11)] #dataframe con variables numéricas
+encuesta_numericas$genero <- as.factor(encuesta_numericas$genero)
+
+library(GGally)
+library(wesanderson)
+pares <- ggpairs(encuesta_numericas, columns=c(1,3:7), aes(color=genero, alpha=0.5),lower = list(continuous="smooth"),upper = list(continuous = wrap("cor", size = 3.5)))
+pares <- pares +scale_fill_manual(values = wes_palette("GrandBudapest2", n = 2)) + scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))
+pares
+```
+
+La matriz de correlaciones para pares de variables se muestra a continuación, desagregada en función del género de los consultados.
+
+```{r matriz corr, message=FALSE}
+numericas_masc <- encuesta_numericas[encuesta_numericas$genero=='Masculino', ] #dataframe, solo varones
+numericas_fem <- encuesta_numericas[encuesta_numericas$genero=='Femenino', ] #dataframe, solo mujeres
+
+library(corrr)
+numericas_masc %>% 
+ correlate() %>% 
+  shave() %>% 
+  fashion() 
+
+numericas_fem %>% 
+ correlate() %>% 
+  shave() %>% 
+  fashion() 
+```
+
+Las correlaciones en ambos casos son muy débiles, encontrándose poca asociación entre variables. Una representación gráfica de dicha asociación se muestra a continuación, distinguiendo según el género.
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 2. Correlación entre variables numéricas. Network plot'}
+#network plot varones
+ntwplot_masc <- network_plot(correlate(numericas_masc), min_cor = 0.1, colours = c('#FF66B2', "white", '#6666FF'))
+ntwplot_masc <- ntwplot_masc + labs(title = "Varones")
+
+#network plot mujeres
+ntwplot_fem <- network_plot(correlate(numericas_fem),min_cor = 0.1, colours = c('#FF66B2', "white", '#6666FF'))
+ntwplot_fem <- ntwplot_fem + labs(title = "Mujeres") 
+
+library(cowplot)
+plot_grid(ntwplot_masc, ntwplot_fem, ncol=2) #para presentarlos lado a lado
+```
+
+En general, se puede detectar que la correlación entre las variables es más bien débil. Para los varones, la mayor asociación se da entre las variables peso, altura y edad. En particular, se observa una correlación más grande entre los pares peso-altura, peso-edad y altura-edad para el universo masculino, respecto de las mujeres encuestadas. Esto puede verse en la pendiente de las rectas mostradas en la *Figura 1*. Para las mujeres, la relación más fuerte parece ser entre peso y altura, siendo la edad un factor con menor correlación con el peso. \
+
+La correlación entre el peso y el consumo de alcohol, la actividad física y el consumo de comida rápida es débil para ambos géneros. Por otra parte, es interesante notar que la correlación entre el peso y los días de actividad física es mayor para el universo femenino, de acuerdo a la *Figura 1*, aunque de todas maneras es muy baja. Existe una relación en ambos casos entre la edad y el consumo diario de alcohol que es más relevante en varones, pero se atribuye principalmente a los hábitos de los consultados, y no se considera a priori como una conexión de interés en este estudio a la hora de predecir el peso.  \
+
+Es importante destacar que, a fin de inferir alguna relación entre variables, el punto de corte en la correlación para la construcción de la *Figura 2* se estableció en 0.1, que es a todas luces un valor muy bajo. Todas las conclusiones expresadas anteriormente son, por tanto, débiles, y deben investigarse más a fondo.\
+
+Luego, se analizó la frecuencia con la que las personas pasaron hambre en el último mes en función del consumo de comidas altas en grasa y de verduras. En primer lugar, se realizó una tabla de contingencias para ambas variables consideradas. Se deja explicitado el código, pero por simplicidad, no se muestran los resultados.
+
+```{r hambre conting, message=FALSE, results='hide'}
+frec_hambre <- table(encuesta_salud_train$frecuencia_hambre_mensual)
+frec_hambre
+
+#frecuencia de hambre versus consumo de verduras
+conting_verduras <- table(encuesta_salud_train$frecuencia_hambre_mensual, encuesta_salud_train$consumo_semanal_verdura, dnn = c('Frec. hambre', 'Consumo de verduras'))
+conting_verduras
+
+#frecuencia de hambre versus consumo de comidas grasas
+conting_grasas <- table(encuesta_salud_train$frecuencia_hambre_mensual, encuesta_salud_train$consumo_semanal_comida_grasa, dnn = c('Frec. hambre', 'Consumo de comidas grasas'))
+conting_grasas
+```
+En primer lugar, se compararon las cantidades de estudiantes, según sus valores de frecuencia de hambre declarados. 
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 3. Frecuencia de hambre semanal'}
+frec_hambre <- as.data.frame(frec_hambre) #convertir a df para gráfico
+
+#gráfico frecuencia de hambre
+library(ggplot2)
+bar_hambre <- ggplot(frec_hambre, aes(fill= Var1, y=Freq, x=Var1)) + geom_bar(stat="identity") + scale_fill_manual(values = wes_palette("GrandBudapest2", 5, type = "continuous")) + ggtitle('Frecuencia de hambre') +theme(axis.text=element_text(size=7)) + ylab('Frecuencia') + xlab('Frecuencia de hambre')+labs(fill='Frecuencia declarada')+ geom_text(aes(label=Freq), vjust=1.6, color="black", size=3)
+bar_hambre
+```
+
+Utilizando las tablas de contingencia generadas anteriormente, se realizaron gráficos de barras apiladas. Para la interpretación, debe tenerse en cuenta que la población que declara haber tenido hambre con las frecuencias más altas (Casi siempre y Siempre) está subrepresentada en el universo, por lo que las conclusiones se verán fuertemente influenciadas por comportamientos anómalos. 
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 4. Impacto de hábitos alimenticios en frecuencia de hambre semanal'}
+conting_verduras <- as.data.frame(conting_verduras) #convertir a df para gráfico
+
+#gráfico frecuencia de hambre vs consumo de verduras
+library(ggplot2)
+bar_verduras <- ggplot(conting_verduras, aes(fill=Consumo.de.verduras, y=Freq, x=Frec..hambre)) + geom_bar(position="fill", stat="identity") + scale_fill_manual(values = wes_palette("GrandBudapest2", 7, type = "continuous")) + ggtitle('Consumo de verduras vs. Frecuencia de hambre') +theme(axis.text=element_text(size=5)) + ylab('Frecuencia relativa') + xlab('Frecuencia de hambre')+labs(fill='Consumo de verduras')
+bar_verduras
+
+conting_grasas <- as.data.frame(conting_grasas) #convertir a df para gráfico
+
+#gráfico frecuencia de hambre vs consumo de comidas grasas
+bar_grasas <- ggplot(conting_grasas, aes(fill=Consumo.de.comidas.grasas, y=Freq, x=Frec..hambre)) + geom_bar(position="fill", stat="identity") + scale_fill_manual(values = wes_palette("GrandBudapest2", 7, type = "continuous")) + ggtitle('Consumo de comidas grasas vs. Frecuencia de hambre') +theme(axis.text=element_text(size=5)) + ylab('Frecuencia relativa') + xlab('Frecuencia de hambre')+labs(fill='Consumo de comidas grasas')
+bar_grasas
+```
+
+En principio, se puede apreciar que, entre los encuestados que declararon haber pasado hambre siempre en el último mes, el consumo de verduras fue marcadamente menor que en los otros casos. En dicho grupo, el bajo o nulo consumo de verduras (menos de tres veces por semana) acumula más de la mitad de las respuestas. Por el contrario, entre los consultados que no habían pasado hambre en el último mes, el nulo consumo de frutas y hortalizas fue mínimo. Si se considera a la frecuencia de hambre como una variable proxy del nivel socioeconómico de los jóvenes encuestados, a priori podría afirmarse que existiría una correlación positiva entre la posición económica de las familias y el consumo de verduras. Esto es, a mayor nivel socioeconómico, aumenta el consumo de frutas y hortalizas.\
+
+No es factible realizar una interpretación tan directa a partir del gráfico de consumo de comidas ricas en grasas, aunque puede observarse una sobrerrepresentación del grupo de individuos que consume comidas grasas con frecuencia (más de una vez al día) entre los alumnos que declararon haber pasado hambre siempre en el último mes. Probablemente, eso se deba a los alimentos que están disponibles para el consumo para dicho grupo social.
+
+## Modelo inicial
+
+A fin de estimar el comportamiento de la variable Peso, se realizó un modelo lineal múltiple, considerando dependencias respecto de las variables altura, edad, género, días de actividad física semanal y consumo diario de alcohol. El modelo a ajustar es entonces 
+
+$$
+Peso = \beta_0 + \beta_1 Altura + \beta_2 Edad + \beta_3 Genero + \beta_4 Act. fisica + \beta_5 Cons. alcohol
+$$
+
+Los parámetros obtenidos en este ajuste, así como su nivel de significación, se muestran a continuación.
+
+```{r modelo 1, message=FALSE}
+#modelo lineal 1
+modelo_1 <- lm(peso ~ altura + edad + genero + dias_actividad_fisica_semanal + consumo_diario_alcohol, data = encuesta_salud_train)
+library(broom)
+tidy_modelo_1 <- tidy(modelo_1, conf.int = TRUE)
+tidy_modelo_1
+```
+
+En este contexto, la ordenada al origen $\beta$~0~ carece de sentido, ya que sería el peso de una persona cuando todas las variables son cero. Esto es físicamente imposible. El coeficiente $\beta$~1~ indica que, cuando la altura se incrementa un cm y las otras variables tienen valores constantes, el peso esperado aumenta en promedio 0,65 kg. Un análisis similar puede realizarse para $\beta$~2~, que representa el incremento promedio de peso esperado (1,41 kg) al aumentarse un año la edad, en ausencia de influencia de otras variables.\
+
+Para estudiar el efecto del género, es importante tener en cuenta que la variable es categórica. En este caso, $\beta$~3~ indica cuánto mayor es, en promedio, el incremento del peso (1,26 kg) para varones respecto de las mujeres (categoría basal), dados valores para todas las otras variables. Esta variable modifica el valor de ordenada al origen del modelo si el dato en cuestión proviene de un varón.\
+
+Finalmente, podría estudiarse de manera parecida la influencia de las variables Días de actividad física semanal y Consumo diario de alcohol en el peso de los encuestados. $\beta$~4~ indica que, por cada día adicional de actividad física realizado a la semana, el peso esperado disminuye 0,1 kg, mientras que de $\beta$~5~ se deduce que, por cada trago extra consumido a la semana, el peso esperado aumenta, en promedio, 0.09 kg. Sin embargo, considerando un valor de corte de 0,05, los coeficientes asociados a estas variables no revisten significatividad a la hora de explicar el peso de los encuestados. Este no es el caso de las variables Altura, Edad y Género, cuyos p-valores son mucho más pequeños que el valor de corte. Asimismo, una conclusión similar puede extraerse observando los intervalos de confianza para cada parámetro. Los intervalos correspondientes a $\beta$~4~ y $\beta$~5~ contienen al cero, mientras que los restantes no.\
+
+La significatividad de los coeficientes se puede observar de manera gráfica, según se muestra a continuación. El color rosado indica los coeficientes no significativos, mientras que en celeste se muestran los que sí lo son.
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 5: Modelo inicial - Significatividad de coeficientes'}
+coef_modelo1 <- ggplot(tidy_modelo_1, aes(estimate, term, color=p.value < 0.05, xmin = conf.low, xmax = conf.high, height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4, color = "#9933FF") +
+  geom_errorbarh() +
+  scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))+
+  guides(color="none") +
+  labs(y = "Coeficientes β", x = "Valor estimado")
+coef_modelo1
+```
+
+La significatividad global del modelo se evaluó realizando un test F, a fin de determinar si alguno de los parámetros hallados es estadísticamente distinto del cero, con un nivel de 0,05.
+
+```{r signif global modelo 1, message=FALSE}
+summary(modelo_1)
+```
+
+De acuerdo al p-valor obtenido, puede afirmarse que al menos una de las variables consideradas es relevante para explicar el fenómeno. A la vez, observando el valor de R^2^ ajustado, se concluye que el modelo explica un 35% de la variabilidad, aproximadamente.\
+
+Par observar detalladamente el comportamiento de la variable, se realizó un análisis univariado del consumo diario de alcohol, desagregando según el género de los consultados.
+
+```{r, message=FALSE, warning=FALSE, fig.width=9, fig.cap='Figura 6: Peso versus consumo de alcohol, desagregado por género'}
+pal<- wes_palette("GrandBudapest2", 7, type = "continuous")
+
+#boxplot consumo de alcohol varones
+bpalcohol_masc <- ggplot(numericas_masc, aes(x = as.factor(consumo_diario_alcohol), y = peso)) + 
+  geom_boxplot(outlier.shape = NA, alpha = 0.75, aes(fill = consumo_diario_alcohol)) + xlab('Consumo diario de alcohol') + ylab('Peso') + theme(legend.position = 'none') + scale_fill_gradientn(colours = pal) + ggtitle('Peso vs. consumo diario de alcohol - Varones') + theme(plot.title = element_text(size=10)) + coord_cartesian(ylim = c(25,100))
+
+#boxplot consumo de alcohol mujeres
+bpalcohol_fem <- ggplot(numericas_fem, aes(x = as.factor(consumo_diario_alcohol), y = peso)) + 
+  geom_boxplot(outlier.shape = NA, alpha = 0.75, aes(fill = consumo_diario_alcohol)) + xlab('Consumo diario de alcohol') + ylab('Peso') + theme(legend.position = 'none') + scale_fill_gradientn(colours = pal) + ggtitle('Peso vs. consumo diario de alcohol - Mujeres') + theme(plot.title = element_text(size=10))  + coord_cartesian(ylim = c(25,100))
+
+library(cowplot) #para presentarlos lado a lado
+plot_grid(bpalcohol_masc, bpalcohol_fem, ncol = 2)
+```
+
+La *Figura 6* muestra que el peso de los encuestados no presenta demasiada variabilidad, al tener en cuenta únicamente su consumo de alcohol y desagregando por género. En la *Figura 1* se puede observar que la correlación es débil, aunque más fuerte para el universo masculino. Un análisis similar se llevó a cabo para los días de actividad física.
+
+```{r, message=FALSE, warning=FALSE, fig.width=9, fig.cap='Figura 7: Peso versus actividad física, desagregado por género'}
+pal2<- wes_palette("GrandBudapest2", 8, type = "continuous")
+
+#boxplot actividad física varones
+bpgim_masc <- ggplot(numericas_masc, aes(x = as.factor(dias_actividad_fisica_semanal), y = peso)) + 
+  geom_boxplot(outlier.shape = NA, alpha = 0.75, aes(fill = dias_actividad_fisica_semanal)) + xlab('Días de actividad física semanal') + ylab('Peso') + theme(legend.position = 'none') + scale_fill_gradientn(colours = pal2) + ggtitle('Peso vs. Días de act. física semanal - Varones') + theme(plot.title = element_text(size=10))  + coord_cartesian(ylim = c(25,100))
+
+#boxplot actividad física mujeres
+bpgim_fem <- ggplot(numericas_fem, aes(x = as.factor(dias_actividad_fisica_semanal), y = peso)) + 
+  geom_boxplot(outlier.shape = NA, alpha = 0.75, aes(fill = dias_actividad_fisica_semanal)) + xlab('Días de actividad física semanal') + ylab('Peso') + theme(legend.position = 'none') + scale_fill_gradientn(colours = pal2) + ggtitle('Peso vs. Días de act. física semanal - Mujeres') + theme(plot.title = element_text(size=10))  + coord_cartesian(ylim = c(25,100))
+
+plot_grid(bpgim_masc, bpgim_fem, ncol = 2) #presentarlos lado a lado
+```
+
+Nuevamente, no se detectó influencia de esta variable (de manera aislada) en el peso de la población encuestada. Los boxplots mostrados anteriormente refuerzan, de alguna manera, la escasa significancia de las variables observada en el ajuste lineal. Esto está de acuerdo con lo observado en la *Figura 1*, donde si bien se detectó una asociación entre variables, esta es muy pequeña como para revestir alguna importancia.
+
+## Modelo con variables categóricas
+
+A continuación, se probó la eficacia de un modelo que incluyera el consumo de snacks y una interacción entre el género y la edad. El modelo a ajustar es entonces
+
+$$
+Peso = \beta_0 + \beta_1 Altura + \beta_2 Edad + \beta_3 Genero + \beta_4 Cons. semanal snacks + \beta_5 Genero \cdot Edad
+$$
+
+Los parámetros obtenidos en este ajuste, así como su nivel de significación, se muestran a continuación. Se estableció la condición basal para la variable categórica Consumo semanal de snacks en el valor "No comí comida salada o snacks en los últimos 7 días". 
+
+```{r modelo 2, message=FALSE}
+#establecer condición basal
+encuesta_salud_train <- encuesta_salud_train %>%
+  mutate(consumo_semanal_snacks = relevel(factor(consumo_semanal_snacks), ref = "No comÃ­ comida salada o snacks en los Ãºltimos 7 dÃ­as"))
+
+#modelo lineal categoricas
+modelo_cat <- lm(peso ~ altura + edad + genero + consumo_semanal_snacks + genero*edad, data = encuesta_salud_train)
+tidy_modelo_cat <- tidy(modelo_cat, conf.int = TRUE)
+tidy_modelo_cat
+```
+
+En el resumen, se puede ver que la ordenada al origen es significativamente distinta de cero. En este modelo, este parámetro no tiene sentido, ya que correspondería al peso de una persona cuando todas las variables son nulas. El coeficiente $\beta$~1~ indica que un incremento de un cm en la altura corresponde a un aumento del peso esperado de 0,64 kg, manteniendo constantes otras variables. Un análisis similar puede realizarse para $\beta$~2~, donde por cada año más, el peso esperado aumenta en promedio 1,22 kg, si todas las otras variables no tuvieran influencia. \
+
+Los coeficientes restantes están asociados a variables categóricas. $\beta$~3~ indica que el peso de los encuestados del género masculino desciende en promedio 4,60 kg respecto de las mujeres encuestadas, si no se tuvieran en cuenta otros efectos. Asimismo, comer snacks 1 a 3 veces durante los últimos 7 días está asociado a un descenso de peso esperado de 1,35 kg respecto de los que no consumieron snacks (condición basal). Efectos similares se observaron para la población que declaró comer snacks una vez al día (descenso promedio de 0,61 kg), dos veces al día (descenso promedio de 1,09 kg), tres veces al día (descenso promedio de 1,27 kg), cuatro a seis veces durante los últimos siete días (descenso promedio de 2,27 kg) y cuatro o más veces al día (descenso promedio de 2,57 kg). Este comportamiento no sería el esperado a priori, aunque, para sacar conclusiones más sólidas, debería saberse qué se entiende por "snack" en esta pregunta y cómo se transmitió este concepto particular a los encuestados. Asimismo, la significatividad de los coeficientes hallados experimentalmente pone en tela de juicio las conclusiones anteriores.\
+
+El coeficiente $\beta$~5~ corresponde a la interacción entre edad y género. Este término de interacción modifica el valor de $\beta$~2~, si el encuestado es varón. Entonces, en esta situación, el aumento de peso esperado es de 0,38 kg por cada año cumplido para varones. Recuperando el valor numérico de $\beta$~2~, esto quiere decir que, para varones, por cada año adicional el peso aumenta en promedio 1,61 kg, versus un valor esperado de 1,22 kg para mujeres. De todas maneras, este coeficiente no es significativo para el modelo. \
+
+La significatividad de los coeficientes encontrados se evaluó observando los p-valores que arroja el modelo, considerando un valor de corte de 0,05. De acuerdo a ello, la variable Género y las categorías Consumo de snacks una, dos o tres veces al día no son relevantes para explicar el fenómeno. Sin embargo, es importante destacar que las apreciaciones anteriores no implican que las variables categóricas en sí no sean significativas. Eso puede evaluarse realizando un test F.
+
+```{r signif consumo snacks y género, message=FALSE}
+tidy(anova(modelo_cat))
+```
+
+El análisis indica que las variables categóricas elegidas son significativas para explicar la respuesta, a pesar de que algunas categorías puntuales pudieran no resultar relevantes para el modelado. Los resultados se resumen a continuación de manera gráfica.\
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 8. Modelo de variables categóricas - Significatividad de coeficientes'}
+ggplot(tidy_modelo_cat, aes(estimate, term, color=p.value < 0.05, xmin = conf.low, xmax = conf.high, height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4, color = "#9933FF") +
+  geom_errorbarh() +
+  scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))+
+  guides(color="none") +
+  labs(y = "Coeficientes β", x = "Valor estimado")
+```
+
+Luego, se evaluó la significatividad global del modelo para explicar el fenómeno.
+
+```{r signif global categóricas, message=FALSE}
+summary(modelo_cat)
+```
+
+Observando el p-valor obtenido, se puede concluir que al menos una de las variables regresoras es útil para predecir el comportamiento del peso de los encuestados. Considerando el valor de R^2^ ajustado, se puede afirmar que el modelo explica aproximadamente un 36% de la variabilidad.\
+
+A fin de mejorar el ajuste, se propuso una nueva variable categórica a partir del consumo semanal de snacks. A priori, un análisis univariado desagregado por género no indicaría una sensible mejora del ajuste con esta nueva definición, ya que no se observaron diferencias significativas en las poblaciones al realizar box-plots. 
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 9. Peso versus consumo de snacks, desagregado por género'}
+library(stringr)
+
+#conjunto de datos, varones 
+encuesta_salud_trainmasc <- encuesta_salud_train[encuesta_salud_train$genero=='Masculino', ]
+
+#boxplot consumo de snacks varones
+bpsnacks_masc <- ggplot(encuesta_salud_trainmasc, aes(x = as.factor(consumo_semanal_snacks), y = peso)) + 
+  geom_boxplot(outlier.shape = NA, alpha = 0.75, aes(fill = as.factor(consumo_semanal_snacks))) + xlab('Consumo de snacks semanal') + ylab('Peso') + theme(legend.position = 'none') + scale_fill_manual(values = wes_palette("GrandBudapest2", 7, type = "continuous")) + ggtitle('Peso vs. Consumo de snacks - Varones') + theme(plot.title = element_text(size=10)) + coord_cartesian(ylim = c(25,100)) +theme(axis.text=element_text(size=6))
+bpsnacks_masc <- bpsnacks_masc + scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+
+#conjunto de datos, mujeres
+encuesta_salud_trainfem <- encuesta_salud_train[encuesta_salud_train$genero=='Femenino', ]
+
+#boxplot consumo de snacks mujeres
+bpsnacks_fem <- ggplot(encuesta_salud_trainfem, aes(x = as.factor(consumo_semanal_snacks), y = peso)) + 
+  geom_boxplot(outlier.shape = NA, alpha = 0.75, aes(fill = as.factor(consumo_semanal_snacks))) + xlab('Consumo de snacks semanal') + ylab('Peso') + theme(legend.position = 'none') + scale_fill_manual(values = wes_palette("GrandBudapest2", 7, type = "continuous")) + ggtitle('Peso vs. Consumo de snacks - Mujeres') + theme(plot.title = element_text(size=10)) + coord_cartesian(ylim = c(25,100)) +theme(axis.text=element_text(size=6))
+bpsnacks_fem <- bpsnacks_fem + scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+
+plot_grid(bpsnacks_masc, bpsnacks_fem, ncol = 2) #presentarlos lado a lado
+```
+
+Se definió el consumo alto de snacks como aquellos que los consumen cuatro o más veces al día. Un consumo bajo de snacks comprende las categorías "1 a 3 veces durante los últimos 7 días" y "4 a 6 veces durante los últimos 7 días" (ambas definen un consumo menor a un snack por día). Finalmente, el consumo medio de snacks es aquel comprendido entre 1 y 3 veces al día. 
+
+```{r snacks categoria nueva, message=FALSE}
+library(dplyr)
+#categorías de consumo de snacks (más generales)
+snacks_bins <- tribble(
+    ~consumo_semanal_snacks, ~bin_snacks,
+    "No comÃ­ comida salada o snacks en los Ãºltimos 7 dÃ­as", 'Nulo',
+    "1 a 3 veces durante los Ãºltimos 7 dÃ­as", 'Bajo',
+    "4 a 6 veces durante los Ãºltimos 7 dÃ­as", 'Bajo',
+    "1 vez al dÃ­a", 'Medio', 
+    "2 veces al dÃ­a", 'Medio',  
+    "3 veces al dÃ­a", 'Medio',
+    "4 o mÃ¡s veces al dÃ­a", 'Alto')
+
+#binning, train
+encuesta_salud_train_bin <- left_join(encuesta_salud_train, snacks_bins, by = 'consumo_semanal_snacks')
+#binning, test
+encuesta_salud_test_bin <- left_join(encuesta_salud_test, snacks_bins, by = 'consumo_semanal_snacks')
+
+#establecer condición basal
+encuesta_salud_train_bin <- encuesta_salud_train_bin %>%
+  mutate(bin_snacks = relevel(factor(bin_snacks), ref = "Nulo"))
+encuesta_salud_test_bin <- encuesta_salud_test_bin %>%
+  mutate(bin_snacks = relevel(factor(bin_snacks), ref = "Nulo"))
+
+#modelo lineal, nueva categoría snacks
+modelo_catbin <- lm(peso ~ altura + edad + genero + bin_snacks + genero*edad, data = encuesta_salud_train_bin)
+tidy_modelo_catbin <- tidy(modelo_catbin, conf.int = TRUE)
+tidy_modelo_catbin
+```
+
+De acuerdo a los p-valores presentados, todas las categorías de consumo de snacks tienen coeficientes asociados significativamente distintos de cero, considerando un valor de corte de 0,05. Los correspondientes intervalos de confianza para los coeficientes no contienen al cero. En este respecto, se consiguió una mejora respecto del modelo anterior, ya que todas las categorías contribuyen a la explicación del fenómeno.\
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 10. Modelo de variables categóricas reordenado - Significatividad de coeficientes'}
+ggplot(tidy_modelo_catbin, aes(estimate, term, color=p.value < 0.05, xmin = conf.low, xmax = conf.high, height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4, color = "#9933FF") +
+  geom_errorbarh() +
+  scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))+
+  guides(color="none") +
+  labs(y = "Coeficientes β", x = "Valor estimado")
+```
+
+El porcentaje de variabilidad explicado por el modelo se evaluó observando el R^2^ ajustado.
+
+```{r resumen cat snacks nueva, message=FALSE}
+summary(modelo_catbin)
+```
+
+Comparando con la variable Consumo de snacks semanal original, se puede apreciar que el porcentaje de variabilidad explicado no aumentó al realizar una recategorización de las respuestas. Sin embargo, sí se obtuvo un valor mayor de estadístico F, con lo que se puede afirmar que al menos una de las variables elegidas es relevante para explicar el fenómeno. Este nuevo modelo debería evaluarse en el conjunto de datos de prueba, a fin de determinar si es efectivamente mejor que el original.
+
+## Modelos propios y evaluación
+
+Se propusieron dos modelos lineales múltiples adicionales para explicar el comportamiento de la variable peso. 
+
+### Modelo 1: influencia de la actividad física
+
+En primer lugar, se probó un modelo que tuviera en cuenta la actividad física de los encuestados. De acuerdo a lo observado en la *Figura 1*, existe una correlación positiva entre la actividad física y el peso de los encuestados. El impacto de esta variable es distinto para mujeres y varones. Entonces, el modelo a ajustar es 
+
+$$
+Peso = \beta_0 + \beta_1 Altura + \beta_2 Edad + \beta_3 Genero + \beta_4 Act. física + \beta_5 Act.física \cdot Género
+$$
+
+Los parámetros obtenidos luego del ajuste, junto con su nivel de significación, se muestran a continuación.
+
+```{r modelo propio 1, message=FALSE}
+#modelo lineal actividad fisica
+modelo_gim <- lm(peso ~ altura + edad + genero + dias_actividad_fisica_semanal + dias_actividad_fisica_semanal*genero, data = encuesta_salud_train)
+tidy_modelo_gim <- tidy(modelo_gim, conf.int = TRUE)
+tidy_modelo_gim
+```
+
+Para este modelo, la ordenada al origen es significativamente distinta de cero. En este caso, este parámetro no tiene sentido, ya que correspondería al peso de una persona cuando todas las variables son nulas. El coeficiente $\beta$~1~ indica que un incremento de un cm en la altura corresponde a un aumento del peso esperado de 0,65 kg, en ausencia de otras variables. Para $\beta$~2~, se puede ver que, por cada año más, el peso esperado aumenta en promedio 1,38 kg, si todas las otras variables no tuvieran efecto. \
+
+$\beta$~3~ indica que el peso esperado de los encuestados del género masculino aumenta en promedio 2,03 kg respecto de las mujeres encuestadas, si no se tuvieran en cuenta otros efectos. Por otra parte, el coeficiente $\beta$~4~ indica que, al realizar un día más de actividad física a la semana, el peso esperado de los encuestados aumenta 0,02 kg, en ausencia de otras variables. Sin embargo, observando el p-valor y el intervalo de confianza para dicho coeficiente, se aprecia que no es significativo para este modelo.\
+
+El coeficiente $\beta$~5~ corresponde a la interacción entre edad y días de actividad física. Este término de interacción modifica el valor de $\beta$~4~, si el encuestado es varón. Entonces, en esta situación, el descenso de peso esperado es de 0,25 kg promedio por cada día agregado de actividad física en varones. Recuperando el valor numérico de $\beta$~4~, esto quiere decir que, para varones, por cada día adicional el peso esperado desciende en promedio 0,23 kg, versus un aumento esperado de 0,02 kg para mujeres. La interacción es significativa.\
+
+Una representación gráfica de la relevancia de los coeficientes se muestra a continuación.
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 11. Influencia de actividad física - Significatividad de coeficientes'}
+ggplot(tidy_modelo_gim, aes(estimate, term, color=p.value < 0.05, xmin = conf.low, xmax = conf.high, height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4, color = "#9933FF") +
+  geom_errorbarh() +
+  scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))+
+  guides(color="none") +
+  labs(y = "Coeficientes β", x = "Valor estimado")
+```
+
+El porcentaje de variabilidad explicado por el modelo se calculó con un test F.
+
+```{r summary alcohol, message=FALSE}
+summary(modelo_gim)
+```
+
+De acuerdo al test, al menos una de las variables regresoras es relevante para explicar el fenómeno. El modelo captura aproximadamente un 35% de la variabilidad, de acuerdo al R^2^ ajustado. Este valor es similar al obtenido con modelos anteriores.
+
+### Modelo 2: efecto del consumo de comidas ricas en grasa
+
+Para el segundo modelo, se incluyó el efecto del consumo de comidas ricas en grasa, a fin de evaluar si los hábitos alimenticios de los encuestados permiten explicar mejor su peso. Asimismo, se agregó una interacción entre género y altura, para indicar que las mujeres suelen ser de talla más pequeña, de acuerdo a lo observado en la *Figura 1*. El modelo a ajustar es entonces
+
+$$
+Peso = \beta_0 + \beta_1 Altura + \beta_2 Edad + \beta_3 Genero + \beta_4 Cons. grasas+ \beta_5 Altura \cdot Género
+$$
+Los parámetros obtenidos luego del ajuste se muestran en la siguiente tabla. Se eligió el consumo nulo de grasas como categoría basal.
+
+```{r modelo propio 2, message=FALSE}
+#establecer condición basal
+encuesta_salud_train <- encuesta_salud_train %>%
+  mutate(consumo_semanal_comida_grasa = relevel(factor(consumo_semanal_comida_grasa), ref = "No comÃ­ comida alta en grasa en los Ãºltimos 7 dÃ­as"))
+
+#modelo lineal alimentación
+modelo_alim <- lm(peso ~ altura + edad + genero + consumo_semanal_comida_grasa + genero*altura, data = encuesta_salud_train)
+tidy_modelo_alim <- tidy(modelo_alim, conf.int = TRUE)
+tidy_modelo_alim
+```
+
+$\beta$~0~, la ordenada al origen, es significativamente distinto de cero. Nuevamente, este parámetro carece de sentido, al igual que en los modelos previamente analizados. El coeficiente $\beta$~1~ indica que un incremento de un cm en la altura corresponde a un aumento del peso promedio esperado de 0,59 kg, en ausencia de otras variables. Para $\beta$~2~, se puede ver que, por cada año más, el peso esperado aumenta en promedio 1,35 kg, si todas las otras variables fueran nulas. \
+
+$\beta$~3~ indica que el peso esperado de los encuestados del género masculino disminuye en promedio 15,7 kg respecto de las mujeres encuestadas, si no se tuvieran en cuenta otros efectos. $\beta$~4~ toma distintos valores, de acuerdo al consumo de comidas grasas declarado por los encuestados. Esto es, se espera que el peso promedio disminuya 0,11 kg si el encuestado come comidas altas en grasa una a tres veces en la semana, 1,68 kg si las ingiere dos o más veces al día, 1,09 kg si lo hace tres veces al día, 0,92 kg en caso de que coma comidas ricas en grasas 4 a 6 veces en la última senama, y 0,02 kg si lo hace 4 o más veces al día. Por el contrario, el peso promedio esperado se incrementa 1 kg si el individuo declara comer grasas una vez al día. Sin embargo, no todos estos coeficientes son significativos, a juzgar por su p-valor y el intervalo de confianza asociado.\
+
+Por otra parte, el coeficiente $\beta$~5~  modifica el valor de $\beta$~1~, si el encuestado es varón. Entonces, en esta situación, el aumento de peso esperado es de 0,1 kg promedio por cada cm adicional en los varones. Recuperando el valor numérico de $\beta$~1~, esto quiere decir que, para varones, por cada cm adicional, el peso esperado aumenta en promedio 0,69 kg. La interacción es significativa, lo que implica que no podría analizarse el efecto de la altura en el peso sin desagregarlo por género.\
+
+A fin de detectar si la variable Consumo de verduras en su totalidad es significativa, se realizó un test F, cuyos resultados se muestran a continuación.
+
+```{r importancia categoricas, message=FALSE}
+tidy(anova(modelo_alim))
+```
+
+De acuerdo a los resultados obtenidos, se puede ver que el consumo de comidas grasas es relevante para explicar el comportamiento del peso de los encuestados. Esto está de acuerdo con la tabla exhibida anteriormente, donde algunas de las categorías asociadas a dicha variable resultaron significativas para explicar la variabilidad. Por lo tanto, podría ser relevante una recategorización de la variable, a fin de obtener coeficientes significativos para todos los niveles. \
+
+Los coeficientes, junto con sus intervalos de confianza, se muestran gráficamente a continuación.
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 12. Influencia del consumo de verduras - Significatividad de coeficientes'}
+ggplot(tidy_modelo_alim, aes(estimate, term, color=p.value < 0.05, xmin = conf.low, xmax = conf.high, height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4, color = "#9933FF") +
+  geom_errorbarh() +
+  scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))+
+  guides(color="none") +
+  labs(y = "Coeficientes β", x = "Valor estimado")
+```
+
+La significatividad global del modelo se evaluó realizando un test F.
+
+```{r summary mod 2, message=FALSE}
+summary(modelo_alim)
+```
+
+De acuerdo al R^2^ ajustado, la variabilidad explicada por el modelo es de alrededor de 35%. Este valor está en el orden del obtenido para los modelos anteriores.\
+
+### Evaluación de modelos
+
+Se evaluó la performance de todos los modelos propuestos en el presente trabajo. En primer lugar, se compararon sus resultados en el conjunto de datos de entrenamiento. Se analizaron los valores obtenidos para el R^2^ ajustado, que tiene en cuenta la cantidad de variables empleadas para el ajuste.
+
+```{r evaluacion modelos, message=FALSE}
+#lista de modelos empleados
+models <- list(modelo_1 = modelo_1, modelo_catbin = modelo_catbin, modelo_gim = modelo_gim, modelo_alim = modelo_alim)
+
+#R2 ajustado
+library(purrr)
+df_metricas_train <- map_df(models, glance, .id = "model") %>%
+  arrange(desc(adj.r.squared))
+df_metricas_train
+```
+
+De acuerdo a la tabla, los mejores resultados se obtuvieron con el modelo de variables categóricas, con la variable Consumo semanal de snacks redefinida. Sin embargo, es importante aclarar que todos los modelos tuvieron una performance similar en el conjunto de datos de entrenamiento. Asimismo, en todos los casos se detectaron coeficientes no relevantes para el análisis, de acuerdo a las *Figuras 7, 9, 10* y *11*. En futuras exploraciones, podrían proponerse modelos que involucren únicamente coeficientes con alto grado de significatividad, para ver si de esa manera el porcentaje de variabilidad explicado mejora.\
+
+Se comparó también la raíz cuadrada del error medio (RMSE) para los distintos modelos, considerando el conjunto de datos de entrenamiento.
+
+```{r prediccion modelos, message=FALSE}
+#lista de predicciones, conjunto de entrenamiento
+lista_predicciones_train <- map(.x = models, .f = augment) 
+
+#calcular RMSE
+library(yardstick)
+map_dfr(.x = lista_predicciones_train, .f = rmse, truth = peso, estimate = .fitted, .id="modelo") %>% 
+  arrange(.estimate)
+```
+
+De acuerdo a este análisis, se observó que el modelo más eficiente en el dataset de entrenamiento fue el modelo de variables categóricas, que había sido seleccionado como óptimo en el paso anterior. Sin embargo, las diferencias entre modelos son muy pequeñas, lo que está de acuerdo con lo observado durante el análisis del R^2^ ajustado.\
+
+Finalmente, se compararon los modelos en base al error medio absoluto (MAE), en el conjunto de datos de entrenamiento.
+
+```{r evalaucion mae, message=FALSE}
+map_dfr(.x = lista_predicciones_train, .f = mae, truth = peso, estimate = .fitted, .id="modelo") %>% 
+  arrange(.estimate)
+```
+
+Nuevamente, se puede apreciar que todos los modelos arrojan valores similares de MAE. En este caso, el modelo basado en la influencia de la alimentación se comporta marginalmente mejor considerando el conjunto de entrenamiento.\
+
+Luego, se comparó la performance de los modelos propuestos en el conjunto de datos de prueba. Para ello, se agregaron las predicciones al dataset, y se calculó el RMSE y MAE en cada caso. Para el modelo inicial, los resultados se muestran a continuación.
+
+```{r predicciones test inicial, message=FALSE}
+#agregar predicciones - modelo inicial
+pred_1 <- augment(modelo_1, newdata = encuesta_salud_test_bin) 
+pred_1 %>% 
+  select(altura, edad, genero, dias_actividad_fisica_semanal, consumo_diario_alcohol, peso, .fitted, .resid)
+
+#calcular RMSE y MAE - modelo inicial
+rmse_1 <- rmse(data = pred_1, truth = peso, estimate = .fitted)
+mae_1 <- mae(data = pred_1, truth = peso, estimate = .fitted)
+```
+
+El análisis se repitió para el modelo de variables categóricas.
+
+```{r predicciones test cat, message=FALSE}
+#agregar predicciones - modelo categóricas
+pred_catbin <- augment(modelo_catbin, newdata = encuesta_salud_test_bin) 
+pred_catbin %>% 
+  select(altura, edad, genero, bin_snacks, peso, .fitted, .resid)
+
+#calcular RMSE y MAE - modelo categóricas
+rmse_catbin <- rmse(data = pred_catbin, truth = peso, estimate = .fitted)
+mae_catbin <- mae(data = pred_catbin, truth = peso, estimate = .fitted)
+```
+
+Lo mismo se realizó para los modelos propios propuestos.
+
+```{r predicciones test gim, message=FALSE}
+#agregar predicciones - modelo actividad fisica
+pred_gim <- augment(modelo_gim, newdata = encuesta_salud_test_bin) 
+pred_gim %>% 
+  select(altura, edad, genero, dias_actividad_fisica_semanal, peso, .fitted, .resid)
+
+#calcular RMSE y MAE - modelo actividad física
+rmse_gim <- rmse(data = pred_gim, truth = peso, estimate = .fitted)
+mae_gim <- mae(data = pred_gim, truth = peso, estimate = .fitted)
+```
+
+```{r predicciones test alim, message=FALSE}
+#agregar predicciones - modelo alimentación
+pred_alim <- augment(modelo_alim, newdata = encuesta_salud_test_bin) 
+pred_alim %>% 
+  select(altura, edad, genero, consumo_semanal_comida_grasa, peso, .fitted, .resid)
+
+#calcular RMSE y MAE - modelo alimentación
+rmse_alim <- rmse(data = pred_alim, truth = peso, estimate = .fitted)
+mae_alim <- mae(data = pred_alim, truth = peso, estimate = .fitted)
+```
+Los valores de RMSE obtenidos para cada modelo se muestran a continuación.
+
+```{r rmse, message=FALSE}
+library(plyr)
+tabla_rmse <- rbind.fill(rmse_1, rmse_catbin, rmse_gim, rmse_alim) 
+tabla_rmse$modelo <- c('modelo_1', 'modelo_catbin', 'modelo_gim', 'modelo_alim') #agregar rótulos de modelos
+tabla_rmse %>%
+  arrange(.estimate)
+```
+
+De acuerdo a este análisis, la mejor performance se obtiene con el modelo de variables categóricas. Sin embargo, al igual que sucedió en instancias anteriores, la bondad de ajuste es similar para todos los modelos propuestos. Más aún, el comportamiento es parecido al observado en el dataset de entrenamiento, lo que evidenciaría que no hubo overfitting.\
+
+El ánálisis se repitió para MAE.
+
+```{r mae, message=FALSE}
+library(plyr)
+tabla_mae <- rbind.fill(mae_1, mae_catbin, mae_gim, mae_alim) 
+tabla_mae$modelo <- c('modelo_1', 'modelo_catbin', 'modelo_gim', 'modelo_alim') #agregar rótulos de modelos
+tabla_mae %>%
+  arrange(.estimate)
+```
+
+Nuevamente, el modelo que mejor explicó la variabilidad del conjunto de datos fue el de variables categóricas. Una vez más, vale mencionar que las diferencias entre los modelos son ínfimas. Asimismo, los valores de MAE obtenidos para el conjunto de datos de prueba son similares a los obtenidos con los datos de entrenamiento.\
+
+En base a la evaluación realizada anteriormente, se puede concluir que el modelo de variables categóricas (con variables redefinidas) resultó ser el mejor para predecir el modelo, ya que se ajusta razonablemente al conjunto de datos de prueba, además de ser uno de los de mejor performance en el dataset de entrenamiento. Es interesante destacar que este modelo es, de todos los propuestos, el único cuyos coeficientes son todos significativos. Una propuesta para futuros abordajes podría ser mejorar los modelos restantes mediante recategorizaciones, a fin de mejorar el ajuste y por lo tanto, la explicabilidad.
+
+## Diagnóstico de modelos
+
+Se analizó detalladamente, para el modelo inicial, el cumplimiento de los supuestos requeridos para realizar una regresión lineal múltiple. Dichos supuestos pueden resumirse como $ε_i ∼ N(0,σ^2)$, independientes entre sí. Dado que no es posible observar los errores, el diagnóstico se realizó considerando los residuos.\
+
+Los gráficos pertinentes para el análisis del modelo inicial se muestran a continuación.
+
+```{r, fig.width=9, fig.cap='Figura 13. Diagnóstico de modelo lineal inicial'}
+cols <- wes_palette("GrandBudapest2", 1, type = "discrete")
+plot(modelo_1, pch=20, col=alpha(cols,0.2))
+```
+
+En primer lugar, se puede ver en el gráfico de residuos vs. valores predichos que la dispersión de residuos se mantiene más o menos constante para todos los valores predichos. Esto es, no se observan valores mayores de residuos en ciertas partes del gráfico, o bien algún tipo de estructura en los residuos que pudiera sugerir que el modelo lineal no es un enfoque apropiado para entender el problema. Más aún, en el gráfico de scale-location no se detectan estructuras, y los residuos parecen distribuirse aleatoriamente a ambos lados de la recta graficada. Por ello, se puede afirmar que el supuesto de homoscedasticidad se cumple, a pesar de la presencia de outliers severos (indicados en las figuras).\
+
+El gráfico cuantil-cuantil presenta severas desviaciones respecto de la distribución teórica, que se hacen más evidentes para valores más alejados del centro. Por lo tanto, el supuesto de normalidad no puede sostenerse para este conjunto de datos.\
+
+Finalmente, analizando el gráfico de leverage vs. residuos, pueden detectarse observaciones con alto apalancamiento, que se alejan de la nube principal de puntos. Sin embargo, ningún punto se encuentra más allá de la distancia de Cook, por lo que puede afirmarse que no hay observaciones influyentes en el conjunto de datos. Esto es, se pueden excluir los puntos anómalos etiquetados y la regresión no cambiaría sensiblemente. Los puntos con mayor leverage (mayor a 0,0035) se muestran a continuación.
+
+```{r alto leverage, message=FALSE}
+#predicciones dataset train, modelo inicial
+prediccion_modelo1 <- as.data.frame(lista_predicciones_train[1]) 
+prediccion_modelo1 %>%
+  filter(modelo_1..hat>=0.0035) %>%
+  arrange(desc(modelo_1..hat))
+```
+
+En resumen, el modelo lineal no cumple con el supuesto de normalidad, aunque sí parecería que los errores son homoscedásticos. Existen observaciones con alto leverage, pero no son influyentes a la hora de ajustar el modelo. Por ello, aunque los supuestos no se cumplan a la perfección, de todas maneras puede aplicarse el modelo lineal múltiple al conjunto de datos. 
+
+## Modelo robusto
+
+Finalmente, se analizó la performance del modelo lineal inicial contra su versión robusta, para un conjunto de datos de entrenamiento con outliers. Para ello, se entrenaron ambos modelos y se compararon métricas relevantes. Los datos empleados se encuentran almacenados en _encuesta_salud_modelo6.csv_.
+
+### Análisis exploratorio - Conjunto de datos con outliers
+
+En primer lugar, se realizó un análisis exploratorio del nuevo conjunto de datos, a fin de detectar diferencias respecto del dataset original empleado en el presente trabajo.
+
+```{r leer robusto, message=FALSE}
+library(tidyverse)
+encuesta_salud_robusto <- read.csv("C:/Users/flore/Desktop/Trabajo Práctico 1/Datasets/encuesta_salud_modelo6.csv")
+glimpse(encuesta_salud_robusto)
+```
+
+Las variables registradas son de la misma clase que las analizadas anteriormente. Previo al análisis, se estudió la presencia de datos faltantes, etiquetados como "Dato perdido". 
+
+```{r chequear perdidos robusto, message=FALSE}
+#contar datos faltantes - dataset con outliers
+perdidos_robusto_porc <- round(sum(encuesta_salud_robusto=='Dato perdido')/nrow(encuesta_salud_robusto), digits = 2)
+print(paste('Porcentaje de datos perdidos: ', perdidos_robusto_porc))
+                                                                
+#ver donde están ubicados
+colSums(encuesta_salud_robusto == 'Dato perdido')
+```
+
+Como la cantidad de datos perdidos es pequeña en relación al tamaño del conjunto de datos, se decidió eliminarlos. El análisis posterior se realizó sobre el dataset limpio. 
+
+```{r limpieza robusto, message=FALSE}
+#limpieza de datos
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$nivel_educativo!='Dato perdido', ]
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$frecuencia_hambre_mensual!='Dato perdido', ]
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$consumo_semanal_frutas!='Dato perdido', ]
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$consumo_semanal_verdura!='Dato perdido', ]
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$consumo_semanal_gaseosas!='Dato perdido', ]
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$consumo_semanal_snacks!='Dato perdido', ]
+encuesta_salud_robusto <- encuesta_salud_robusto[encuesta_salud_robusto$consumo_semanal_comida_grasa!='Dato perdido', ]
+```
+
+Se graficaron las variables numéricas de a pares, a fin de observar el efecto de posibles outliers en el conjunto de datos
+
+```{r, message=FALSE, fig.height=7, fig.width=9, fig.cap='Figura 14. Correlación entre variables de a pares - Conjunto con outliers'}
+robusto_numericas <- encuesta_salud_robusto[, c(2,3,5,6,8,10,11)] #dataframe con variables numéricas
+robusto_numericas$genero <- as.factor(robusto_numericas$genero)
+
+pares_robusto <- ggpairs(robusto_numericas, columns=c(1,3:7), aes(color=genero, alpha=0.5),lower = list(continuous="smooth"),upper = list(continuous = wrap("cor", size = 3.5)))
+pares_robusto <- pares_robusto +scale_fill_manual(values = wes_palette("GrandBudapest2", n = 2)) + scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))
+pares_robusto
+```
+
+Observando estos gráficos, y comparándolos con los mostrados en la *Figura 1*, se puede apreciar una notable diferencia en el gráfico de peso vs. altura, donde hay una nube de puntos separada del cúmulo principal. Asimismo, la distribución de la variable Peso presenta una cola más larga a derecha. Esto tiene su correlato numérico: la correlación entre las variables peso y altura es notoriamente más débil en este caso. Los gráficos de peso versus altura se muestran lado a lado a continuación.
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 15. Peso vs. altura - Dataset sin outliers (izq.) y con outliers (der.)'}
+graf <- getPlot(pares, 3,2)
+graf_robusto <- getPlot(pares_robusto, 3,2)
+plot_grid(graf, graf_robusto, ncol = 2)
+```
+
+Mirando en detalle la *Figura 15*, también puede apreciarse que los datos agregados podrían ser observaciones influyentes, ya que tienen alto leverage y además constituyen outliers severos. Sería interesante ver el comportamiento de estos puntos a la hora de ajustar el modelo lineal inicial propuesto.
+
+### Entrenamiento y evaluación de modelo inicial - Conjunto de datos con outliers
+
+Se entrenó el modelo lineal propuesto inicialmente en el nuevo conjunto de datos, que contiene valores atípicos. Recordando, el modelo a ajustar es entonces 
+
+$$
+Peso = \beta_0 + \beta_1 Altura + \beta_2 Edad + \beta_3 Genero + \beta_4 Act. fisica + \beta_5 Cons. alcohol
+$$
+
+Los parámetros obtenidos en este ajuste, así como su nivel de significación, se muestran a continuación.
+
+```{r modelo 1 outliers, message=FALSE}
+#modelo lineal 1 - dataset con outliers
+modelo_1_outliers <- lm(peso ~ altura + edad + genero + dias_actividad_fisica_semanal + consumo_diario_alcohol, data = encuesta_salud_robusto)
+tidy_modelo_1_outliers <- tidy(modelo_1_outliers, conf.int = TRUE)
+tidy_modelo_1_outliers
+```
+
+A priori, se puede detectar que los p-valores obtenidos al ajustar el modelo a este dataset son mayores. Sin embargo, ciertas conclusiones extraidas durante el ajuste previo se mantienen. Esto es, los coeficientes relacionados a Actividad física ($\beta$~4~) y Consumo diario de alcohol ($\beta$~5~) no son significativos para explicar el fenómeno. Una representación gráfica de los coeficientes obtenidos, con su correspondiente comparación contra los originales, se exhibe a continuación.
+
+```{r, message=FALSE, fig.width=9, fig.cap='Figura 16. Coeficientes - Dataset sin outliers (izq.) y con outliers (der.)'}
+coef_modelo1_outliers <- ggplot(tidy_modelo_1_outliers, aes(estimate, term, color=p.value < 0.05, xmin = conf.low, xmax = conf.high, height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4, color = "#9933FF") +
+  geom_errorbarh() +
+  scale_color_manual(values = wes_palette("GrandBudapest2", n = 2))+
+  guides(color="none") +
+  labs(y = "Coeficientes β", x = "Valor estimado")
+plot_grid(coef_modelo1, coef_modelo1_outliers, ncol = 2)
+```
+
+Luego, se calculó el nivel de significatividad global del modelo
+
+```{r signif global modelo 1 outliers, message=FALSE}
+summary(modelo_1_outliers)
+```
+
+El porcentaje de variabilidad explicada con este modelo en este dataset es de alrededor de 10%, un marcado descenso respecto del conseguido con el conjunto de entrenamiento original, que rondaba el 35%. Este resultado tiene sentido, ya que el parámetro R^2^ es muy sensible a outliers, tales como los observadso previamente en el análisis exploratorio. sin embargo, para completar el análisis, se calcularon las métricas RMSE y MAE para este ajuste. Previamente, se calcularon las predicciones
+
+```{r prediccion modelo outliers, message=FALSE}
+#lista de predicciones, conjunto de entrenamiento con outliers
+pred_outliers <- augment(modelo_1_outliers) 
+pred_outliers %>% 
+  select(altura, edad, genero, dias_actividad_fisica_semanal, consumo_diario_alcohol, peso, .fitted, .resid)
+
+#calcular RMSE y MAE
+rmse_1 <- rmse(data = pred_1, truth = peso, estimate = .fitted)
+mae_1 <- mae(data = pred_1, truth = peso, estimate = .fitted)
+rmse_outliers <- rmse(data = pred_outliers, truth = peso, estimate = .fitted)
+mae_outliers <- mae(data = pred_outliers, truth = peso, estimate = .fitted)
+
+tabla <- rbind.fill(rmse_1, rmse_outliers, mae_1, mae_outliers) 
+tabla$modelo <- c('modelo_1', 'modelo_1_outliers', 'modelo_1', 'modelo_1_outliers') #agregar rótulos de modelos
+tabla
+```
+
+Las métricas calculadas evidencian que la calidad del ajuste empeora significativamente al agregar los outliers al conjunto de datos. En general, puede afirmarse que, en presencia de numerosas observaciones atípicas, el modelo lineal inicial no es adecuado para explicar el fenómeno, por lo que debe recurrirse a alternativas robustas para mejorar el ajuste. 
+
+### Entrenamiento y evaluación de modelo robusto - Conjunto de datos con outliers
+
+Con fines comparativos, se entrenó un modelo lineal robusto sobre el conjunto de datos con observaciones atípicas. Los parámetros obtenidos se muestran en la siguiente tabla.
+
+```{r modelo robusto, message=FALSE}
+#modelo lineal robusto - dataset con outliers
+library(MASS)
+modelo_1_robusto <- rlm(peso ~ altura + edad + genero + dias_actividad_fisica_semanal + consumo_diario_alcohol, data = encuesta_salud_robusto)
+tidy_modelo_1_robusto <- tidy(modelo_1_robusto, conf.int = TRUE)
+tidy_modelo_1_robusto
+```
+
+A priori, se puede ver que el intervalo de confianza asociado a los parámetros del modelo es mucho más estrecho. Nuevamente, los coeficientes asociados a Actividad física ($\beta$~4~) y Consumo diario de alcohol ($\beta$~5~) no son significativos para explicar el fenómeno.\
+
+Se calcularon las métricas RMSE y MAE para el modelo robusto, y se las comparó con las obtenidas con el modelo lineal inicial (no robusto)
+
+```{r prediccion modelo robusto, message=FALSE}
+#lista de predicciones modelo robusto, conjunto de entrenamiento con outliers
+pred_robusto <- augment(modelo_1_robusto) 
+pred_robusto %>% 
+  dplyr::select(altura, edad, genero, dias_actividad_fisica_semanal, consumo_diario_alcohol, peso, .fitted, .resid)
+
+#calcular RMSE y MAE
+rmse_robusto <- rmse(data = pred_robusto, truth = peso, estimate = .fitted)
+mae_robusto <- mae(data = pred_robusto, truth = peso, estimate = .fitted)
+
+tabla_robusto <- rbind.fill(rmse_robusto, rmse_outliers, mae_robusto, mae_outliers) 
+tabla_robusto$modelo <- c('modelo_1_robusto', 'modelo_1_outliers', 'modelo_1_robusto', 'modelo_1_outliers') #agregar rótulos de modelos
+tabla_robusto
+```
+
+MAE mejora al usar un modelo robusto, no así RMSE. Sin embargo, teniendo en cuenta el conocimiento que se tiene del conjunto de datos, sería mejor emplear técnicas robustas. De todas maneras, una conclusión más adecuada respecto de la performance de estos modelos debería sacarse analizando los resultados sobre un conjunto de prueba. Por otra parte, si el dataset proviniera de un conjunto de datos real (esto es, si los outliers no hubieran sido introducidos artificialmente con fines de comparación), sería interesante analizar la naturaleza de los outliers, a fin de determinar si es relevante dejarlos y utilizar técnicas robustas, o bien realizar un trabajo de limpieza y usar métodos no robustos. 
+
+## Conclusiones
+
+En el presente trabajo, se buscó explicar el comportamiento de la variable Peso, considerando los datos extraídos de la Encuesta Mundial de Salud Escolar realizada en el año 2018. Previamente, se realizó una limpieza y análisis exploratorio de los datos, a fin de detectar las variables más relevantes para la explicación. Se pudo observar que las variables Edad, Altura y Género estaban más correlacionadas con la variable objetivo, mientras que los factores relativos al estilo de vida de los encuestados parecían jugar un papel menor.\
+
+Luego, se ajustaron varios modelos lineales múltiples, que involucraban variables numéricas y categóricas, a fin de explicar el comportamiento del peso en el universo de esta encuesta. Los modelos propuestos hicieron énfasis tanto en las variables físicas (altura, edad, género) como en aspectos relativos a las elecciones de los adolescentes involucrados. Se priorizó la construcción de modelos que pudieran ser explicados de manera sencilla, frente a armados más complicados. Si bien la significatividad de los coeficientes individuales en estos modelos fluctuó considerablemente para cada variable particular, el coeficiente de correlación global (R^2^ ajustado) se mantuvo alrededor de 0,35 para todos ellos. Esto abre la posibilidad de explorar recategorizaciones de variables, o definición de otras nuevas, para mejorar el ajuste. También, se estudió en detalle el cumplimiento de supuestos estadísticos para un modelo. Durante este análisis, se verificó que dichos supuestos no son imprescindibles para que el modelo lineal funcione razonablemente. 
+
+Por otra parse, los modelos propuestos se evaluaron sobre un conjunto de datos de prueba, obteniéndose resultados similares a los arrojados en el conjunto de entrenamiento. Los valores de RMSE y MAE fueron similares en ambos conjuntos para cada modelo, por lo que podría inferirse que no hay sobreajuste. Asimismo, las diferencias entre modelos también fueron muy pequeñas, con lo que todos tendrían una performance similar para este conjunto de datos en particular. \
+
+Finalmente, se estudió la influencia de outliers en la bondad de ajuste del modelo. Se utilizó para ello un dataset artificial, que contenía datos anómalos. En general, se pudo ver que el modelo es sensible a outliers severos. El ajuste mejora con modelos robustos, aunque la diferencia es pequeña. En este caso, es conveniente usar un modelo robusto, aunque en casos generales, se impondría la necesidad de analizar previamente los datos anómalos, para no tomar una decisión a ciegas acerca del método que conviene utilizar.
+
+## Bibliografía complementaria
+
+Secretaría de Gobierno de Salud. _EMSE 2018. Resumen ejecutivo total nacional._ Ministerio de Salud y Desarrollo Social. Presidencia de la Nación.
